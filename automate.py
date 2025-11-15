@@ -3,9 +3,16 @@ from tkinter import colorchooser, messagebox
 import os
 import webbrowser
 import json
+import subprocess
+import datetime
 
 def create_html_file(message, color="#ff3366", delay=5, filename="winter_led.html"):
     """Create the complete HTML file with LED message"""
+
+    # Ensure the 'docs' directory exists
+    docs_dir = "docs"
+    os.makedirs(docs_dir, exist_ok=True)
+    filepath = os.path.join(docs_dir, filename)
 
     # Use JSON to properly escape the message for embedding in JavaScript
     escaped_message = json.dumps(message)
@@ -87,8 +94,7 @@ html, body {{
 <canvas id="c"></canvas>
 <div id="led-message" class="blink">
     <pre id="ascii-art"></pre>
-    <div id="ieee-sub-message" style="
-    margin-top: 0px;">🎄 Merry Christmas from IEEE NDU 🎄</div>
+    <div id="ieee-sub-message">🎄 Merry Christmas from IEEE NDU 🎄</div>
 </div>
 
 <script>
@@ -279,7 +285,7 @@ const asciiElement = document.querySelector('#ascii-art');
 const rawMessage = {escaped_message};
 
 // Split into lines and pad each to the max width to center the ascii art
-const lines = rawMessage.split('\\n');
+const lines = rawMessage.split('\n');
 const maxLen = Math.max(...lines.map(line => line.length));
 const padded = lines.map(line => {{
   const totalPadding = maxLen - line.length;
@@ -287,7 +293,7 @@ const padded = lines.map(line => {{
   return leftPad + line;
 }});
 
-asciiElement.textContent = padded.join('\\n');
+asciiElement.textContent = padded.join('\n');
 
 // Mobile specific adjustments
 if (window.innerWidth <= 768) {{
@@ -409,10 +415,10 @@ animate(0);
 </body>
 </html>'''
 
-    with open(filename, 'w', encoding='utf-8') as f:
+    with open(filepath, 'w', encoding='utf-8') as f:
         f.write(html_content)
 
-    return filename
+    return filepath
 
 
 class LEDGeneratorApp:
@@ -488,13 +494,6 @@ class LEDGeneratorApp:
         right_col = tk.Frame(settings_frame)
         right_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(20, 0))
 
-        filename_frame = tk.Frame(right_col)
-        filename_frame.pack(fill=tk.X, pady=5)
-        tk.Label(filename_frame, text="Filename:", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
-        self.filename_var = tk.StringVar(value="winter_led.html")
-        filename_entry = tk.Entry(filename_frame, textvariable=self.filename_var, width=20)
-        filename_entry.pack(side=tk.LEFT, padx=10)
-
         button_frame = tk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=(15, 0))
 
@@ -528,6 +527,62 @@ class LEDGeneratorApp:
         )
         self.open_btn.pack(side=tk.LEFT, padx=5)
 
+        self.deploy_btn = tk.Button(
+            action_frame,
+            text="🚀 Deploy to GitHub",
+            command=self.deploy_to_github,
+            bg="#4a4a4a",
+            fg="white",
+            font=("Arial", 11, "bold"),
+            padx=20,
+            pady=8,
+            cursor="hand2"
+        )
+        self.deploy_btn.pack(side=tk.LEFT, padx=5)
+
+    def deploy_to_github(self):
+        # First, generate the file.
+        created_file_path = self.generate_html()
+
+        if not created_file_path:
+            # The generate_html method already shows an error, so we can just return.
+            return
+
+        try:
+            # Add the specific file to git
+            subprocess.run(["git", "add", created_file_path], check=True)
+
+            # Commit the changes
+            commit_message = f"Deploy: {os.path.basename(created_file_path)}"
+            subprocess.run(["git", "commit", "-m", commit_message], check=True)
+
+            # Push the changes
+            subprocess.run(["git", "push"], check=True)
+
+            # Get repo URL to show the user
+            repo_url_proc = subprocess.run(["git", "config", "--get", "remote.origin.url"], capture_output=True, text=True, check=True)
+            repo_url = repo_url_proc.stdout.strip()
+            
+            # Construct the GitHub Pages URL
+            if repo_url.endswith('.git'):
+                repo_url = repo_url[:-4]
+            if repo_url.startswith('https://'):
+                username, repo_name = repo_url.split('/')[-2:]
+                pages_url = f"https://{username}.github.io/{repo_name}/{os.path.basename(created_file_path)}"
+                
+                # Copy URL to clipboard
+                self.root.clipboard_clear()
+                self.root.clipboard_append(pages_url)
+                
+                messagebox.showinfo("Success! 🎉", f"Deployment successful!\n\nURL: {pages_url}\n(Copied to clipboard!)")
+            else:
+                messagebox.showinfo("Success! 🎉", "Deployment to GitHub Pages successful!")
+
+        except subprocess.CalledProcessError as e:
+            messagebox.showerror("Deployment Error", f"Failed to deploy to GitHub:\n{e.stderr or e.stdout or str(e)}")
+        except FileNotFoundError:
+            messagebox.showerror("Deployment Error", "Git command not found. Make sure Git is installed and in your system's PATH.")
+
     def pick_color(self):
         color = colorchooser.askcolor(initialcolor=self.color, title="Choose LED Color")
         if color[1]:
@@ -540,13 +595,11 @@ class LEDGeneratorApp:
 
         if not message:
             messagebox.showwarning("Empty Message", "Please enter a message!")
-            return
+            return None # Return None on failure
 
         delay = self.delay_var.get()
-        filename = self.filename_var.get()
-
-        if not filename.endswith('.html'):
-            filename += '.html'
+        
+        filename = f"message-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.html"
 
         try:
             self.created_file = create_html_file(message, self.color, delay, filename)
@@ -557,9 +610,11 @@ class LEDGeneratorApp:
             )
 
             self.open_btn.config(state=tk.NORMAL)
+            return self.created_file # Return the path of the created file
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to create file:\n{str(e)}")
+            return None # Return None on failure
 
     def open_in_browser(self):
         if self.created_file and os.path.exists(self.created_file):
